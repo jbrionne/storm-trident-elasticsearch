@@ -1,25 +1,31 @@
 package com.github.fhuss.storm.elasticsearch.state;
 
-import backtype.storm.task.IMetricsContext;
-import backtype.storm.topology.FailedException;
-import com.github.fhuss.storm.elasticsearch.handler.BulkResponseHandler;
-import com.github.fhuss.storm.elasticsearch.ClientFactory;
-import com.github.fhuss.storm.elasticsearch.Document;
-import com.github.fhuss.storm.elasticsearch.mapper.TridentTupleMapper;
+import java.io.IOException;
+import java.util.Collection;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.sort.SortBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import storm.trident.state.State;
 import storm.trident.state.StateFactory;
 import storm.trident.tuple.TridentTuple;
+import backtype.storm.task.IMetricsContext;
+import backtype.storm.topology.FailedException;
 
-import java.io.IOException;
-import java.util.*;
+import com.github.fhuss.storm.elasticsearch.ClientFactory;
+import com.github.fhuss.storm.elasticsearch.Document;
+import com.github.fhuss.storm.elasticsearch.handler.BulkResponseHandler;
+import com.github.fhuss.storm.elasticsearch.mapper.TridentTupleMapper;
 
 /**
  * Simple {@link State} implementation for Elasticsearch.
@@ -81,14 +87,13 @@ public class ESIndexState<T> implements State {
         }
     }
 
-    public Collection<T> searchQuery(String query, List<String> indices, List<String> types) {
+    public Collection<T> searchQuery(String query, List<String> indices, List<String> types) {        
+        
         SearchResponse response = client.prepareSearch()
-                .setIndices(indices.toArray(new String[indices.size()]))
-                .setTypes(types.toArray(new String[types.size()]))
-                .setQuery(query)
-                .execute()
-                .actionGet();
-
+				.setIndices(indices.toArray(new String[indices.size()]))
+				.setTypes(types.toArray(new String[types.size()])).setSize(Integer.MAX_VALUE).setQuery(query)
+				.execute().actionGet();
+        
         List<T> result = new LinkedList<>();
         for(SearchHit hit : response.getHits()) {
             try {
@@ -99,6 +104,25 @@ public class ESIndexState<T> implements State {
         }
         return result;
     }
+    
+    public Collection<T> searchSortedAndFirstNQuery(String query, List<String> indices, List<String> types,
+			SortBuilder sortBuilder, int firstN) {
+				
+		SearchResponse response = client.prepareSearch()
+				.setIndices(indices.toArray(new String[indices.size()]))
+				.setTypes(types.toArray(new String[types.size()])).setSize(firstN).addSort(sortBuilder)
+				.setQuery(query).execute().actionGet();
+
+		List<T> result = new LinkedList<>();
+		for (SearchHit hit : response.getHits()) {
+			try {
+				result.add(serializer.deserialize(hit.source()));
+			} catch (IOException e) {
+				LOGGER.error("Error while trying to deserialize data from json source");
+			}
+		}
+		return result;
+	}
 
     public static class Factory<T> implements StateFactory {
 
